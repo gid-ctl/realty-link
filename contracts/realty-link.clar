@@ -178,3 +178,98 @@
   } { shares: amount }
   )
 )
+
+;; PUBLIC INTERFACE FUNCTIONS
+
+;; Asset Creation: Tokenize new real estate property
+(define-public (create-asset
+    (total-supply uint)
+    (fractional-shares uint)
+    (metadata-uri (string-utf8 256))
+  )
+  (begin
+    ;; Input validation
+    (asserts! (> total-supply u0) ERR-INVALID-INPUT)
+    (asserts! (> fractional-shares u0) ERR-INVALID-INPUT)
+    (asserts! (<= fractional-shares total-supply) ERR-INVALID-INPUT)
+    (asserts! (is-valid-metadata-uri metadata-uri) ERR-INVALID-INPUT)
+
+    (let ((asset-id (var-get next-asset-id)))
+      ;; Register new asset
+      (map-set asset-registry { asset-id: asset-id } {
+        owner: tx-sender,
+        total-supply: total-supply,
+        fractional-shares: fractional-shares,
+        metadata-uri: metadata-uri,
+        is-transferable: true,
+        created-at: stacks-block-height,
+      })
+
+      ;; Initialize ownership
+      (set-shares asset-id tx-sender total-supply)
+
+      ;; Mint NFT ownership token
+      (unwrap! (nft-mint? asset-ownership-token asset-id tx-sender)
+        ERR-TRANSFER-FAILED
+      )
+
+      ;; Log creation event
+      (unwrap! (log-event u"ASSET_CREATED" asset-id tx-sender) ERR-EVENT-LOGGING)
+
+      ;; Update counter
+      (var-set next-asset-id (+ asset-id u1))
+      (ok asset-id)
+    )
+  )
+)
+
+;; Fractional Ownership Transfer: Trade property shares
+(define-public (transfer-fractional-ownership
+    (asset-id uint)
+    (to-principal principal)
+    (amount uint)
+  )
+  (let (
+      (asset (unwrap! (map-get? asset-registry { asset-id: asset-id }) ERR-INVALID-ASSET))
+      (sender tx-sender)
+      (sender-shares (get-shares asset-id sender))
+    )
+    ;; Comprehensive validation
+    (asserts! (is-valid-asset-id asset-id) ERR-INVALID-INPUT)
+    (asserts! (is-valid-principal to-principal) ERR-INVALID-INPUT)
+    (asserts! (get is-transferable asset) ERR-UNAUTHORIZED)
+    (asserts! (is-compliance-check-passed asset-id to-principal)
+      ERR-COMPLIANCE-CHECK-FAILED
+    )
+    (asserts! (>= sender-shares amount) ERR-INSUFFICIENT-SHARES)
+
+    ;; Execute share transfer
+    (set-shares asset-id sender (- sender-shares amount))
+    (set-shares asset-id to-principal
+      (+ (get-shares asset-id to-principal) amount)
+    )
+
+    ;; Log transfer event
+    (unwrap! (log-event u"TRANSFER" asset-id sender) ERR-EVENT-LOGGING)
+
+    ;; Transfer NFT if complete ownership transfer
+    (if (is-eq sender-shares amount)
+      (unwrap! (nft-transfer? asset-ownership-token asset-id sender to-principal)
+        ERR-TRANSFER-FAILED
+      )
+      true
+    )
+
+    (ok true)
+  )
+)
+
+;; Compliance Management: Update KYC/AML status
+(define-public (set-compliance-status
+    (asset-id uint)
+    (user principal)
+    (is-approved bool)
+  )
+  (begin
+    ;; Authorization check
+    (asserts! (is-valid-asset-id asset-id) ERR-INVALID-INPUT)
