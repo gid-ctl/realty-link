@@ -273,3 +273,53 @@
   (begin
     ;; Authorization check
     (asserts! (is-valid-asset-id asset-id) ERR-INVALID-INPUT)
+    (asserts! (is-valid-principal user) ERR-INVALID-INPUT)
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-UNAUTHORIZED)
+
+    ;; Update compliance status
+    (map-set compliance-status {
+      asset-id: asset-id,
+      user: user,
+    } {
+      is-approved: is-approved,
+      last-updated: stacks-block-height,
+      approved-by: tx-sender,
+    })
+
+    ;; Log compliance update
+    (unwrap! (log-event u"COMPLIANCE_UPDATE" asset-id user) ERR-EVENT-LOGGING)
+
+    (ok is-approved)
+  )
+)
+
+;; READ-ONLY QUERY FUNCTIONS
+
+;; Asset Information Retrieval
+(define-read-only (get-asset-details (asset-id uint))
+  (map-get? asset-registry { asset-id: asset-id })
+)
+
+;; Share Balance Query
+(define-read-only (get-owner-shares
+    (asset-id uint)
+    (owner principal)
+  )
+  (ok (get-shares asset-id owner))
+)
+
+;; Compliance Status Query
+(define-read-only (get-compliance-details
+    (asset-id uint)
+    (user principal)
+  )
+  (map-get? compliance-status {
+    asset-id: asset-id,
+    user: user,
+  })
+)
+
+;; Event History Query
+(define-read-only (get-event (event-id uint))
+  (map-get? events { event-id: event-id })
+)
